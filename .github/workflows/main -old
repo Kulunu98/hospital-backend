@@ -7,7 +7,7 @@
 # To get a newer version, you will need to update the SHA.
 # You can also reference a tag or branch, but the action may change without warning.
 
-name: CodeQL Analysis and Deploy to Amazon ECS
+name: Deploy to Amazon ECS
 
 on:
   push:
@@ -16,45 +16,19 @@ on:
 
 env:
   AWS_REGION: ap-south-1                   # set this to your preferred AWS region, e.g. us-west-1
-  ECR_REPOSITORY: webapp-hospital          # set this to your Amazon ECR repository name
-  ECS_SERVICE: web-ecs-service             # set this to your Amazon ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # set this to your Amazon ECS cluster name
+  ECR_REPOSITORY: webapp-hospital           # set this to your Amazon ECR repository name
+  ECS_SERVICE: web-ecs-service                 # set this to your Amazon ECS service name
+  ECS_CLUSTER: web-ecs-cluster                 # set this to your Amazon ECS cluster name
   ECS_TASK_DEFINITION: ecs-task-revision22.json # set this to the path to your Amazon ECS task definition
                                                # file, e.g. .aws/task-definition.json
-  CONTAINER_NAME: web-app                  # set this to the name of the container in the
-                                           # containerDefinitions section of your task definition
+  CONTAINER_NAME: web-app           # set this to the name of the container in the
+                                               # containerDefinitions section of your task definition
 
 jobs:
-  codeQL:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'javascript', 'typescript' ] # Node.js languages
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
   deploy:
-    name: Deploy to Amazon ECS
+    name: Deploy
     runs-on: ubuntu-latest
     environment: production
-    needs: codeQL   # Ensure deployment only runs after successful CodeQL analysis
 
     steps:
       - name: Checkout
