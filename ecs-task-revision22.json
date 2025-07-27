@@ -1,17 +1,15 @@
 {
-    "taskDefinitionArn": "arn:aws:ecs:ap-south-1:269569141529:task-definition/hospital:2",
+    "taskDefinitionArn": "arn:aws:ecs:ap-south-1:269569141529:task-definition/ecs-task:22",
     "containerDefinitions": [
         {
-            "name": "hospital",
-            "image": "269569141529.dkr.ecr.ap-south-1.amazonaws.com/hospital",
+            "name": "web-app",
+            "image": "269569141529.dkr.ecr.ap-south-1.amazonaws.com/webapp-hospital:latest",
             "cpu": 0,
             "portMappings": [
                 {
-                    "name": "hospital",
                     "containerPort": 5000,
                     "hostPort": 5000,
-                    "protocol": "tcp",
-                    "appProtocol": "http"
+                    "protocol": "tcp"
                 }
             ],
             "essential": true,
@@ -19,36 +17,35 @@
                 {
                     "name": "PORT",
                     "value": "5000"
-                },
-                {
-                    "name": "MONGO_URI",
-                    "value": "mongodb+srv://hospitaluser:fK6Noz3K8u8mPEA2@hospital-db.krvy4ix.mongodb.net"
                 }
             ],
-            "environmentFiles": [],
             "mountPoints": [],
             "volumesFrom": [],
-            "ulimits": [],
+            "secrets": [
+                {
+                    "name": "MONGO_URI",
+                    "valueFrom": "arn:aws:secretsmanager:ap-south-1:269569141529:secret:webapp/mongo_uri-YF0Esf"
+                },
+                {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "arn:aws:secretsmanager:ap-south-1:269569141529:secret:webapp/jwt-secret-CidvgT"
+                }
+            ],
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/hospital",
-                    "mode": "non-blocking",
-                    "awslogs-create-group": "true",
-                    "max-buffer-size": "25m",
+                    "awslogs-group": "/ecs/web-app",
                     "awslogs-region": "ap-south-1",
                     "awslogs-stream-prefix": "ecs"
-                },
-                "secretOptions": []
+                }
             },
             "systemControls": []
         }
     ],
-    "family": "hospital",
-    "taskRoleArn": "arn:aws:iam::269569141529:role/ecsTaskExecutionRole",
+    "family": "ecs-task",
     "executionRoleArn": "arn:aws:iam::269569141529:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
-    "revision": 2,
+    "revision": 22,
     "volumes": [],
     "status": "ACTIVE",
     "requiresAttributes": [
@@ -65,10 +62,7 @@
             "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
         },
         {
-            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.28"
-        },
-        {
-            "name": "com.amazonaws.ecs.capability.task-iam-role"
+            "name": "ecs.capability.secrets.asm.environment-variables"
         },
         {
             "name": "ecs.capability.execution-role-ecr-pull"
@@ -78,9 +72,6 @@
         },
         {
             "name": "ecs.capability.task-eni"
-        },
-        {
-            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
         }
     ],
     "placementConstraints": [],
@@ -91,14 +82,9 @@
     "requiresCompatibilities": [
         "FARGATE"
     ],
-    "cpu": "512",
-    "memory": "1024",
-    "runtimePlatform": {
-        "cpuArchitecture": "X86_64",
-        "operatingSystemFamily": "LINUX"
-    },
-    "registeredAt": "2025-06-07T14:18:17.994Z",
-    "registeredBy": "arn:aws:sts::269569141529:assumed-role/AWSReservedSSO_AdministratorAccess_7c0a01d02142f1af/kulunu",
-    "enableFaultInjection": false,
+    "cpu": "256",
+    "memory": "512",
+    "registeredAt": "2025-07-27T03:59:23.526Z",
+    "registeredBy": "arn:aws:iam::269569141529:user/kulunu-tf",
     "tags": []
 }
