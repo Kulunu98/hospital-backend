@@ -39,14 +39,14 @@ jobs:
     - name: Monitor project in Snyk dashboard
       uses: snyk/actions/node@master
       env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_TOKEN: f341a67a-603f-4e2a-b568-b019dadac1da
       with:
         command: monitor
 
     - name: Run Snyk test and save SARIF report
       uses: snyk/actions/node@master
       env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_TOKEN: f341a67a-603f-4e2a-b568-b019dadac1da
       with:
         command: test
         args: --sarif-file-output=snyk.sarif
