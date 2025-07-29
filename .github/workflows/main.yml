@@ -25,6 +25,15 @@ env:
                                            # containerDefinitions section of your task definition
 
 jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: f341a67a-603f-4e2a-b568-b019dadac1da
+          #SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
   codeQL:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
