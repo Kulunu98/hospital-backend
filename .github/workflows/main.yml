@@ -122,8 +122,8 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ steps.build-image.outputs.image }}
-          args: --severity-threshold=high  --file=Dockerfile
-          continue-on-error: true
+          args: --severity-threshold=high  --file=Dockerfile --sarif-file-output=snyk.sarif
+          ignore-failures: true
 
       - name: Upload Snyk Docker SARIF report
         if: always()  # Always try, even if previous step fails
