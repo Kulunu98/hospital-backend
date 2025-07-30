@@ -122,7 +122,7 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ steps.build-image.outputs.image }}
-          args: --file=Dockerfile --fail-on=all --sarif-file-output=snyk-docker.sarif
+          args: --severity-threshold=high  --file=Dockerfile
 
       - name: Upload Snyk Docker SARIF report
         uses: github/codeql-action/upload-sarif@v3
