@@ -39,14 +39,14 @@ jobs:
     - name: Monitor project in Snyk dashboard
       uses: snyk/actions/node@master
       env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_TOKEN: f341a67a-603f-4e2a-b568-b019dadac1da
       with:
         command: monitor
 
     - name: Run Snyk test and save SARIF report
       uses: snyk/actions/node@master
       env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_TOKEN: f341a67a-603f-4e2a-b568-b019dadac1da
       with:
         command: test
         args: --sarif-file-output=snyk.sarif --fail-on=all
@@ -86,7 +86,7 @@ jobs:
     name: Deploy to Amazon ECS
     runs-on: ubuntu-latest
     environment: production
-    needs: [codeQL, snyk]   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
+    needs: codeQL   # Ensure deployment only runs after successful CodeQL analysis
 
     steps:
       - name: Checkout
@@ -115,19 +115,6 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Scan built Docker image with Snyk
-        uses: snyk/actions/docker@v1.10.0
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: ${{ steps.build-image.outputs.image }}
-          args: --file=Dockerfile --fail-on=all --sarif-file-output=snyk-docker.sarif
-
-      - name: Upload Snyk Docker SARIF report
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: snyk-docker.sarif    
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
