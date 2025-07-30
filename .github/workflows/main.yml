@@ -129,7 +129,7 @@ jobs:
         if: always()  # Always try, even if previous step fails
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: snyk-docker.sarif    
+          sarif_file: snyk.sarif    
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
