@@ -1,5 +1,5 @@
 {
-    "taskDefinitionArn": "arn:aws:ecs:ap-south-1:269569141529:task-definition/ecs-task:22",
+    "taskDefinitionArn": "arn:aws:ecs:ap-south-1:269569141529:task-definition/ecs-task:36",
     "containerDefinitions": [
         {
             "name": "web-app",
@@ -45,7 +45,7 @@
     "family": "ecs-task",
     "executionRoleArn": "arn:aws:iam::269569141529:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
-    "revision": 22,
+    "revision": 36,
     "volumes": [],
     "status": "ACTIVE",
     "requiresAttributes": [
@@ -84,7 +84,7 @@
     ],
     "cpu": "256",
     "memory": "512",
-    "registeredAt": "2025-07-27T03:59:23.526Z",
+    "registeredAt": "2025-07-30T03:13:54.049Z",
     "registeredBy": "arn:aws:iam::269569141529:user/kulunu-tf",
     "tags": []
 }
