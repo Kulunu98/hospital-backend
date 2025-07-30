@@ -36,25 +36,25 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Monitor project in Snyk dashboard
-      uses: snyk/actions/node@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        command: monitor
+    # - name: Monitor project in Snyk dashboard
+    #   uses: snyk/actions/node@master
+    #   env:
+    #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    #   with:
+    #     command: monitor
 
-    - name: Run Snyk test and save SARIF report
-      uses: snyk/actions/node@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        command: test
-        args: --sarif-file-output=snyk.sarif --fail-on=all
+    # - name: Run Snyk test and save SARIF report
+    #   uses: snyk/actions/node@master
+    #   env:
+    #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    #   with:
+    #     command: test
+    #     args: --sarif-file-output=snyk.sarif --fail-on=all
 
-    - name: Upload SARIF to GitHub Code Scanning
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: snyk.sarif
+    # - name: Upload SARIF to GitHub Code Scanning
+    #   uses: github/codeql-action/upload-sarif@v3
+    #   with:
+    #     sarif_file: snyk.sarif
       
           
   codeQL:
@@ -132,8 +132,7 @@ jobs:
       - name: Upload Snyk Docker SARIF report
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: snyk-docker.sarif 
-          category: snyk-docker   
+          sarif_file: snyk.sarif   
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
