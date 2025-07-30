@@ -123,7 +123,7 @@ jobs:
         with:
           image: ${{ steps.build-image.outputs.image }}
           args: --severity-threshold=high  --file=Dockerfile
-          ignore-test-failures: true
+          ignore-failures: true
 
       - name: Upload Snyk Docker SARIF report
         uses: github/codeql-action/upload-sarif@v3
