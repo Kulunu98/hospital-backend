@@ -129,9 +129,18 @@ jobs:
           image: ${{ steps.build-image.outputs.image }}
           args: --severity-threshold=high  --file=Dockerfile --sarif-file-output=snyk.sarif
 
-      - name: Sanitize SARIF file to ensure single run
+      #- name: Sanitize SARIF file to ensure single run
+      #  run: |
+      #    jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
+      
+      - name: Check SARIF file and sanitize
+        if: success() || failure()
         run: |
-          jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif    
+          if [ -s snyk.sarif ]; then
+            jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
+          else
+            echo '{}' > snyk-single-run.sarif
+          fi
 
       - name: Upload Snyk Docker SARIF report
         uses: github/codeql-action/upload-sarif@v3
