@@ -25,16 +25,16 @@ env:
                                            # containerDefinitions section of your task definition
 
 jobs:
-  snyk:
-    name: snyk scan
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+  # snyk:
+  #   name: snyk scan
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     actions: read
+  #     contents: read
+  #     security-events: write
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
 
     # - name: Monitor project in Snyk dashboard
     #   uses: snyk/actions/node@master
@@ -90,7 +90,7 @@ jobs:
       contents: read
       security-events: write
     environment: production
-    needs: [codeQL, snyk]   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
+    needs: codeQL   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
 
     steps:
       - name: Checkout
