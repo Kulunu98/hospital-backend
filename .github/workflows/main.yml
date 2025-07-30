@@ -90,7 +90,7 @@ jobs:
       contents: read
       security-events: write
     environment: production
-    needs: codeQL   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
+    needs: [codeQL, snyk]   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
 
     steps:
       - name: Checkout
