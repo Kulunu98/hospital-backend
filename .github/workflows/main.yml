@@ -46,7 +46,7 @@ jobs:
     - name: Run Snyk test and save SARIF report
       uses: snyk/actions/node@master
       env:
-        SNYK_TOKEN: #${{ secrets.SNYK_TOKEN }}
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       with:
         command: test
         args: --sarif-file-output=snyk.sarif --fail-on=all
