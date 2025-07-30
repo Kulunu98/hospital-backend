@@ -25,36 +25,36 @@ env:
                                            # containerDefinitions section of your task definition
 
 jobs:
-  # snyk:
-  #   name: snyk scan
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     actions: read
-  #     contents: read
-  #     security-events: write
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
+  snyk:
+    name: snyk scan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    # - name: Monitor project in Snyk dashboard
-    #   uses: snyk/actions/node@master
-    #   env:
-    #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-    #   with:
-    #     command: monitor
+    - name: Monitor project in Snyk dashboard
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        command: monitor
 
-    # - name: Run Snyk test and save SARIF report
-    #   uses: snyk/actions/node@master
-    #   env:
-    #     SNYK_TOKEN: #${{ secrets.SNYK_TOKEN }}
-    #   with:
-    #     command: test
-    #     args: --sarif-file-output=snyk.sarif --fail-on=all
+    - name: Run Snyk test and save SARIF report
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: #${{ secrets.SNYK_TOKEN }}
+      with:
+        command: test
+        args: --sarif-file-output=snyk.sarif --fail-on=all
 
-    # - name: Upload SARIF to GitHub Code Scanning
-    #   uses: github/codeql-action/upload-sarif@v3
-    #   with:
-    #     sarif_file: snyk.sarif
+    - name: Upload SARIF to GitHub Code Scanning
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: snyk.sarif
       
           
   codeQL:
