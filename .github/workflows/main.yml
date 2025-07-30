@@ -117,7 +117,7 @@ jobs:
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Scan built Docker image with Snyk
-        uses: snyk/actions/docker@b2a3c305bca0a52ceaf3d999fddee7558337d740
+        uses: snyk/actions/docker@v1.10.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
