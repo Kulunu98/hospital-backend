@@ -111,7 +111,7 @@ jobs:
             --severity-threshold=high
             --file=Dockerfile
             --sarif-file-output=snyk-docker.sarif
-            --project-name=docker/${{ env.ECR_REPOSITORY }}
+            --project-name=${{ env.ECR_REPOSITORY }}
 
       - name: Upload Docker SARIF to GitHub Code Scanning
         run: |
