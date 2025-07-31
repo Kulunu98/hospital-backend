@@ -129,10 +129,10 @@ jobs:
           image: ${{ steps.build-image.outputs.image }}
           args: >-
             --severity-threshold=high  
-            --file=Dockerfile 
-            --sarif-file-output=snyk.sarif 
+            --file=Dockerfile
             --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
             --monitor
+            --sarif-file-output=snyk.sarif 
 
       #- name: Sanitize SARIF file to ensure single run
       #  run: |
