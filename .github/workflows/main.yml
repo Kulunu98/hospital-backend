@@ -13,6 +13,10 @@ env:
   ECS_TASK_DEFINITION: ecs-task-revision36.json
   CONTAINER_NAME: web-app
 
+permissions:
+  contents: read
+  security-events: write
+  
 jobs:
   snyk:
     name: Snyk Code Scan
