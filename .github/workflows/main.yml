@@ -116,9 +116,11 @@ jobs:
       - name: Upload Docker SARIF to GitHub Code Scanning
         run: |
           if [ -f snyk-docker.sarif ]; then
-            jq 'del(.runs[1:])' snyk-docker.sarif > snyk-docker-single-run.sarif || echo '{}' > snyk-docker-single-run.sarif
+            jq 'del(.runs[1:])' snyk-docker.sarif > snyk-docker-single-run.sarif || {
+              echo '{"version":"2.1.0","runs":[]}' > snyk-docker-single-run.sarif
+          }
           else
-            echo '{}' > snyk-docker-single-run.sarif
+          echo '{"version":"2.1.0","runs":[]}' > snyk-docker-single-run.sarif
           fi
 
       - name: Upload SARIF
