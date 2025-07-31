@@ -131,8 +131,7 @@ jobs:
             --severity-threshold=high  
             --file=Dockerfile 
             --sarif-file-output=snyk.sarif 
-            --project-name=ecr-scan-backend-hospital
-            #--project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
+            --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
             --monitor
 
       #- name: Sanitize SARIF file to ensure single run
