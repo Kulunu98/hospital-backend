@@ -1,12 +1,3 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# GitHub recommends pinning actions to a commit SHA.
-# To get a newer version, you will need to update the SHA.
-# You can also reference a tag or branch, but the action may change without warning.
-
 name: CodeQL Analysis and Deploy to Amazon ECS
 
 on:
@@ -15,48 +6,49 @@ on:
       - main
 
 env:
-  AWS_REGION: ap-south-1                   # set this to your preferred AWS region, e.g. us-west-1
-  ECR_REPOSITORY: webapp-hospital          # set this to your Amazon ECR repository name
-  ECS_SERVICE: web-ecs-service             # set this to your Amazon ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # set this to your Amazon ECS cluster name
-  ECS_TASK_DEFINITION: ecs-task-revision36.json # set this to the path to your Amazon ECS task definition
-                                               # file, e.g. .aws/task-definition.json
-  CONTAINER_NAME: web-app                  # set this to the name of the container in the
-                                           # containerDefinitions section of your task definition
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: webapp-hospital
+  ECS_SERVICE: web-ecs-service
+  ECS_CLUSTER: web-ecs-cluster
+  ECS_TASK_DEFINITION: ecs-task-revision36.json
+  CONTAINER_NAME: web-app
 
+permissions:
+  contents: read
+  security-events: write
+  
 jobs:
   snyk:
-    name: snyk scan
+    name: Snyk Code Scan
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
       security-events: write
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Monitor project in Snyk dashboard
-      uses: snyk/actions/node@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        command: monitor
+      - name: Monitor project in Snyk dashboard
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: monitor
 
-    - name: Run Snyk test and save SARIF report
-      uses: snyk/actions/node@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        command: test
-        args: --sarif-file-output=snyk.sarif --fail-on=all
+      - name: Run Snyk test and save SARIF report
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+          args: --sarif-file-output=snyk.sarif --fail-on=all
 
-    - name: Upload SARIF to GitHub Code Scanning
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: snyk.sarif
-      
-          
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk.sarif
+
   codeQL:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -64,12 +56,10 @@ jobs:
       actions: read
       contents: read
       security-events: write
-
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript' ] # Node.js languages
-
+        language: [ 'javascript']
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -82,22 +72,18 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-  deploy:
-    name: Deploy to Amazon ECS
+  build-and-scan-ecr:
+    name: Build, Scan & Push Docker Image to ECR
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    environment: production
-    needs: [codeQL, snyk]   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
-
+    needs: [snyk, codeQL]
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -105,52 +91,76 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
+        uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Build, tag, and push Docker image to ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build a docker container and
-          # push it to ECR so that it can
-          # be deployed to ECS.
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Scan built Docker image with Snyk
-        continue-on-error: true
+      - name: Scan Docker image with Snyk
         uses: snyk/actions/docker@master
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ steps.build-image.outputs.image }}
+          command: test
           args: >-
-            --severity-threshold=high  
+            --severity-threshold=high
             --file=Dockerfile
+            --sarif-file-output=snyk-docker.sarif
             --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
-            --monitor
-            --sarif-file-output=snyk.sarif 
 
-      #- name: Sanitize SARIF file to ensure single run
-      #  run: |
-      #    jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
-      
-      - name: Check SARIF file and sanitize
-        if: success() || failure()
+      - name: Upload Docker SARIF to GitHub Code Scanning
         run: |
-          if [ -s snyk.sarif ]; then
-            jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
+          if [ -f snyk-docker.sarif ]; then
+            jq 'del(.runs[1:])' snyk-docker.sarif > snyk-docker-single-run.sarif 2>/dev/null || \
+            echo '{"version":"2.1.0","runs":[]}' > snyk-docker-single-run.sarif
           else
-            echo '{}' > snyk-single-run.sarif
+          echo '{"version":"2.1.0","runs":[]}' > snyk-docker-single-run.sarif
           fi
 
-      - name: Upload Snyk Docker SARIF report
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: snyk-single-run.sarif   
+          sarif_file: snyk-docker-single-run.sarif
+
+  deploy:
+    name: Deploy to Amazon ECS
+    runs-on: ubuntu-latest
+    needs: [build-and-scan-ecr]
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Monitor Docker image in Snyk Web UI
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: monitor
+          image: ${{ needs.build-and-scan-ecr.outputs.image }}
+          args: >-
+            --file=Dockerfile
+            --project-name=docker/${{ env.ECR_REPOSITORY }}
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
@@ -158,7 +168,7 @@ jobs:
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
+          image: ${{ needs.build-and-scan-ecr.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2

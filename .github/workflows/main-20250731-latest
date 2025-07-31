@@ -127,7 +127,12 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ steps.build-image.outputs.image }}
-          args: --severity-threshold=high  --file=Dockerfile --sarif-file-output=snyk.sarif
+          args: >-
+            --severity-threshold=high  
+            --file=Dockerfile
+            --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
+            --monitor
+            --sarif-file-output=snyk.sarif 
 
       #- name: Sanitize SARIF file to ensure single run
       #  run: |
