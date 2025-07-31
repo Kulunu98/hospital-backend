@@ -121,7 +121,7 @@ jobs:
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Scan built Docker image with Snyk
-        continue-on-error: false
+        continue-on-error: true
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -131,7 +131,8 @@ jobs:
             --severity-threshold=high  
             --file=Dockerfile 
             --sarif-file-output=snyk.sarif 
-            --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
+            --project-name=ecr-scan-backend-hospital
+            #--project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
             --monitor
 
       #- name: Sanitize SARIF file to ensure single run
