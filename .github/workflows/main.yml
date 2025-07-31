@@ -6,12 +6,12 @@ on:
       - main
 
 env:
-  AWS_REGION: ap-south-1                   # AWS region
-  ECR_REPOSITORY: webapp-hospital          # ECR repo name
-  ECS_SERVICE: web-ecs-service             # ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # ECS cluster name
-  ECS_TASK_DEFINITION: ecs-task-revision36.json # ECS task definition file path
-  CONTAINER_NAME: web-app                  # Container name in ECS task definition
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: webapp-hospital
+  ECS_SERVICE: web-ecs-service
+  ECS_CLUSTER: web-ecs-cluster
+  ECS_TASK_DEFINITION: ecs-task-revision36.json
+  CONTAINER_NAME: web-app
 
 jobs:
   snyk:
@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript' ]  # Node.js languages
+        language: [ 'javascript', 'typescript' ]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -72,6 +72,8 @@ jobs:
     name: Build, Scan & Push Docker Image to ECR
     runs-on: ubuntu-latest
     needs: [snyk, codeQL]
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -99,17 +101,17 @@ jobs:
 
       - name: Scan Docker image with Snyk
         uses: snyk/actions/docker@master
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ steps.build-image.outputs.image }}
+          command: test
           args: >-
             --severity-threshold=high
             --file=Dockerfile
-            --project-name=${{ env.ECR_REPOSITORY }}-${{ github.sha }}
-            --monitor
             --sarif-file-output=snyk-docker.sarif
-        continue-on-error: false
+            --project-name=docker/${{ env.ECR_REPOSITORY }}
 
       - name: Upload Docker SARIF to GitHub Code Scanning
         run: |
@@ -118,7 +120,6 @@ jobs:
           else
             echo '{}' > snyk-docker-single-run.sarif
           fi
-        shell: bash
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -144,6 +145,17 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Monitor Docker image in Snyk Web UI
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: monitor
+          image: ${{ needs.build-and-scan-ecr.outputs.image }}
+          args: >-
+            --file=Dockerfile
+            --project-name=docker/${{ env.ECR_REPOSITORY }}
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
