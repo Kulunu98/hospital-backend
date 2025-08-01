@@ -63,7 +63,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript' ] # Node.js languages
+        # language: [ 'javascript', 'typescript' ] # Node.js languages
+        language: [ 'javascript' ] # Node.js languages
 
     steps:
       - name: Checkout repository
