@@ -1,3 +1,12 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+# GitHub recommends pinning actions to a commit SHA.
+# To get a newer version, you will need to update the SHA.
+# You can also reference a tag or branch, but the action may change without warning.
+
 name: CodeQL Analysis and Deploy to Amazon ECS
 
 on:
@@ -11,22 +20,18 @@ env:
   ECS_SERVICE: web-ecs-service             # set this to your Amazon ECS service name
   ECS_CLUSTER: web-ecs-cluster             # set this to your Amazon ECS cluster name
   ECS_TASK_DEFINITION: ecs-task-revision36.json # set this to the path to your Amazon ECS task definition
+                                               # file, e.g. .aws/task-definition.json
   CONTAINER_NAME: web-app                  # set this to the name of the container in the
-
-permissions:
-  actions: read
-  contents: read
-  security-events: write
-
+                                           # containerDefinitions section of your task definition
 
 jobs:
   snyk:
     name: snyk scan
     runs-on: ubuntu-latest
-    # permissions:
-    #   actions: read
-    #   contents: read
-    #   security-events: write
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -55,10 +60,10 @@ jobs:
   codeQL:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
-    # permissions:
-    #   actions: read
-    #   contents: read
-    #   security-events: write
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
 
     strategy:
       fail-fast: false
@@ -115,15 +120,32 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+      - name: Scan built Docker image with Snyk
+        continue-on-error: true
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          image-ref: ${{ steps.build-image.outputs.image }}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          image: ${{ steps.build-image.outputs.image }}
+          args: --severity-threshold=high  --file=Dockerfile --sarif-file-output=snyk.sarif
+
+      #- name: Sanitize SARIF file to ensure single run
+      #  run: |
+      #    jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
+      
+      - name: Check SARIF file and sanitize
+        if: success() || failure()
+        run: |
+          if [ -s snyk.sarif ]; then
+            jq 'del(.runs[1:])' snyk.sarif > snyk-single-run.sarif
+          else
+            echo '{}' > snyk-single-run.sarif
+          fi
+
+      - name: Upload Snyk Docker SARIF report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-single-run.sarif   
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
@@ -140,5 +162,3 @@ jobs:
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
-
-
