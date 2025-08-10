@@ -84,6 +84,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      issues: write
       security-events: write
     environment: production
     needs: [codeQL, snyk]   # Ensure deployment only runs after successful CodeQL analysis and Snyk scan
@@ -98,7 +99,7 @@ jobs:
             issue-title: "Deploying v1.3.5 to production"
             issue-body: "Please approve or deny the deployment of version v1.3.5."
             timeout-minutes: 3       
-            
+
       - name: Checkout
         uses: actions/checkout@v4
 
