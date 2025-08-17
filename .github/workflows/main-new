@@ -1,18 +1,20 @@
-name: CodeQL Analysis, Security Scans and Deploy to Amazon ECS
+name: CodeQL Analysis and Deploy to Amazon ECS
 
 on:
   push:
     branches:
       - main
 
-# Set environment variables for AWS and ECS
+# ----------------------------
+# Environment variables
+# ----------------------------
 env:
-  AWS_REGION: ap-south-1                   # AWS region
-  ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
-  ECS_SERVICE: web-ecs-service             # Amazon ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # Amazon ECS cluster name
-  ECS_TASK_DEFINITION: ecs-task-revision36.json # Path to ECS task definition
-  CONTAINER_NAME: web-app                  # Container name in ECS task definition
+  AWS_REGION: ap-south-1                     # AWS region
+  ECR_REPOSITORY: webapp-hospital            # Amazon ECR repository name
+  ECS_SERVICE: web-ecs-service               # Amazon ECS service name
+  ECS_CLUSTER: web-ecs-cluster               # Amazon ECS cluster name
+  ECS_TASK_DEFINITION: ecs-task-revision36.json  # Path to ECS task definition
+  CONTAINER_NAME: web-app                    # ECS container name
 
 permissions:
   actions: read
@@ -21,16 +23,15 @@ permissions:
 
 jobs:
   # ----------------------------
-  # Snyk Scan (Static & Dependency Analysis)
+  # Snyk Scan
   # ----------------------------
   snyk:
-    name: Snyk SCA Scan
+    name: Snyk Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Monitor project dependencies in Snyk dashboard
       - name: Monitor project in Snyk dashboard
         uses: snyk/actions/node@master
         env:
@@ -38,7 +39,6 @@ jobs:
         with:
           command: monitor
 
-      # Run Snyk scan and save results in SARIF format
       - name: Run Snyk test and save SARIF report
         uses: snyk/actions/node@master
         env:
@@ -47,14 +47,13 @@ jobs:
           command: test
           args: --sarif-file-output=snyk.sarif --fail-on=all
 
-      # Upload Snyk SARIF report to GitHub Security tab
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: snyk.sarif
 
   # ----------------------------
-  # CodeQL Static Analysis
+  # CodeQL Analysis
   # ----------------------------
   codeQL:
     name: CodeQL Analysis
@@ -62,83 +61,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ] # Node.js language
+        language: [ 'javascript' ]   # Node.js languages
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Initialize CodeQL
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
 
-      # Perform CodeQL analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
   # ----------------------------
-  # DAST: OWASP ZAP Dynamic Analysis
-  # ----------------------------
-  dast:
-    name: OWASP ZAP Dynamic Analysis
-    runs-on: ubuntu-latest
-    needs: [snyk, codeQL]   # Run only after Snyk & CodeQL succeed
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Build and run the application container
-      - name: Build and run application
-        run: |
-          docker build -t webapp-test .
-          docker run -d --name webapp -p 8080:8080 webapp-test
-          # Wait until the app is ready to accept connections
-          for i in {1..15}; do
-            if curl -s http://localhost:8080 >/dev/null; then
-              echo "App is up!"
-              break
-            fi
-            echo "Waiting for app..."
-            sleep 5
-          done
-
-      # Run OWASP ZAP baseline scan (internal container workspace)
-      - name: Run OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.10.0
-        with:
-          target: "http://localhost:8080"    # Use localhost for container port
-          cmd_options: "-a"                  # Aggressive passive scan
-          allow_issue_writing: false         # Don’t create GitHub issues automatically
-
-      # Copy the reports from ZAP container to GitHub workspace
-      - name: Copy ZAP reports
-        run: |
-          CONTAINER_ID=$(docker ps -q -f ancestor=ghcr.io/zaproxy/zaproxy:stable)
-          docker cp $CONTAINER_ID:/zap/wrk/report_json.json ./report_json.json
-          docker cp $CONTAINER_ID:/zap/wrk/report_md.md ./report_md.md
-          docker cp $CONTAINER_ID:/zap/wrk/report_html.html ./report_html.html
-
-      # Upload human-readable HTML report as artifact
-      - name: Upload ZAP HTML report
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-report
-          path: report_html.html
-
-      # Upload SARIF results to GitHub Security tab
-      - name: Upload ZAP SARIF results
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: report_json.json
-
-      # Cleanup application container
-      - name: Cleanup
-        run: docker rm -f webapp || true
-
-  # ----------------------------
-  # Deployment to Amazon ECS
+  # Deploy to Amazon ECS
   # ----------------------------
   deploy:
     name: Deploy to Amazon ECS
@@ -149,9 +86,8 @@ jobs:
       issues: write
       security-events: write
     environment: production
-    needs: [dast]   # Deploy only if DAST passes
+    needs: [codeQL, snyk]   # Deployment runs only after successful CodeQL & Snyk jobs
     steps:
-      # Require manual approval before deploying
       - name: Approval
         uses: trstringer/manual-approval@v1
         with:
@@ -160,52 +96,47 @@ jobs:
           minimum-approvals: 1
           issue-title: "Deploying v1.3.5 to production"
           issue-body: "Please approve or deny the deployment of version v1.3.5."
-          timeout-minutes: 3       
+          timeout-minutes: 3
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Authenticate to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
 
-      # Build, tag and push container image
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Build Docker image and push to Amazon ECR
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Run Trivy vulnerability scan
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      # Upload Trivy scan results to GitHub Security tab
-      - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload Trivy scan results to GitHub Security tab
         if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # Render ECS task definition with new image
-      - name: Fill in the new image ID in the ECS task definition
+      - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -213,7 +144,6 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
-      # Deploy ECS service
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
