@@ -1,30 +1,24 @@
-name: CodeQL Analysis, Security Scans, DAST, and Deploy to Amazon ECS
+name: CodeQL Analysis, Security Scans and Deploy to Amazon ECS
 
-# Trigger pipeline on push to main branch
 on:
   push:
     branches:
       - main
 
-# Global environment variables
 env:
-  AWS_REGION: ap-south-1                   # Your AWS region
-  ECR_REPOSITORY: webapp-hospital          # ECR repository name
-  ECS_SERVICE: web-ecs-service             # ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # ECS cluster name
+  AWS_REGION: ap-south-1                   # set this to your preferred AWS region
+  ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
+  ECS_SERVICE: web-ecs-service             # Amazon ECS service name
+  ECS_CLUSTER: web-ecs-cluster             # Amazon ECS cluster name
   ECS_TASK_DEFINITION: ecs-task-revision36.json # ECS task definition file
   CONTAINER_NAME: web-app                  # ECS container name
 
-# Set permissions for GitHub actions
 permissions:
   actions: read
   contents: read
   security-events: write
 
 jobs:
-  # ==========================
-  # Snyk Scan (SCA)
-  # ==========================
   snyk:
     name: Snyk Scan (SCA)
     runs-on: ubuntu-latest
@@ -32,14 +26,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Monitor project in Snyk
+      - name: Monitor project in Snyk dashboard
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: monitor
 
-      - name: Run Snyk test
+      - name: Run Snyk test and save SARIF report
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -47,21 +41,18 @@ jobs:
           command: test
           args: --sarif-file-output=snyk.sarif --fail-on=all
 
-      - name: Upload Snyk SARIF to GitHub
+      - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: snyk.sarif
 
-  # ==========================
-  # CodeQL Analysis (SAST)
-  # ==========================
   codeQL:
     name: CodeQL Analysis (SAST)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        language: ['javascript']
+        language: [ 'javascript' ] # Node.js language
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,13 +65,10 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-  # ==========================
-  # DAST - OWASP ZAP
-  # ==========================
   dast:
     name: Dynamic Application Security Testing (DAST)
     runs-on: ubuntu-latest
-    needs: [snyk, codeQL]
+    needs: [snyk, codeQL]   # Run after Snyk & CodeQL
     services:
       mongodb:
         image: mongo:5.0
@@ -92,11 +80,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Build the application image
       - name: Build application image
-        run: docker build -t webapp-test .
+        run: |
+          docker build -t webapp-test .
 
+      # Start the app container with proper networking and environment
       - name: Start application container
         run: |
+          # Use host networking to avoid Docker networking issues
           docker run -d \
             --name webapp \
             --network host \
@@ -105,91 +97,179 @@ jobs:
             -e PORT="8080" \
             -e HOST="0.0.0.0" \
             webapp-test
+          
+          # Give it more time to start
           sleep 20
+          
+          # Check container status
+          echo "Container status:"
+          docker ps -a
+          
+          echo "Container logs:"
+          docker logs webapp
+          
+          # Check if container is running
           if ! docker ps | grep webapp | grep "Up"; then
-            echo "Container failed to start"
+            echo "Container is not running properly"
             docker logs webapp --tail 50
             exit 1
           fi
 
+      # Wait for application to be ready with health check
       - name: Wait for application to be ready
         run: |
+          echo "Waiting for application to start..."
+          
+          # First, let's check if the container is running
+          echo "Checking container status..."
+          docker ps -a | grep webapp || echo "Container not found"
+          
+          # Check container logs
+          echo "Container logs:"
+          docker logs webapp
+          
           timeout=120
           elapsed=0
+          
           while [ $elapsed -lt $timeout ]; do
-            if curl -s http://localhost:8080 >/dev/null; then
-              echo "Application is ready"
+            # More detailed debugging
+            echo "Testing connectivity (attempt $((elapsed/5 + 1)))..."
+            
+            # Test with verbose curl
+            if curl -v http://localhost:8080 2>&1 | head -10; then
+              echo "Application is ready!"
               break
             fi
+            
+            # Also try with wget as backup
+            if wget -q --spider http://localhost:8080 2>/dev/null; then
+              echo "Application is ready (via wget)!"
+              break
+            fi
+            
+            # Check if process is listening on port 8080
+            if netstat -tlnp 2>/dev/null | grep ':8080 ' || ss -tlnp 2>/dev/null | grep ':8080 '; then
+              echo "Port 8080 is being used by some process"
+            else
+              echo "No process listening on port 8080"
+            fi
+            
+            echo "Waiting... ($elapsed/$timeout seconds)"
             sleep 5
             elapsed=$((elapsed + 5))
           done
+          
           if [ $elapsed -ge $timeout ]; then
-            echo "Application did not start in $timeout seconds"
+            echo "Application failed to respond within $timeout seconds"
+            echo "Final container status:"
+            docker ps -a | grep webapp
+            echo "Final container logs:"
             docker logs webapp --tail 50
+            echo "Network information:"
+            docker port webapp || echo "No port mapping found"
+            echo "Process information:"
+            netstat -tlnp | grep ':8080' || echo "No process on port 8080"
             exit 1
           fi
 
-      # OWASP ZAP Baseline Scan (SARIF output)
-      - name: OWASP ZAP Baseline Scan
+      # Verify the application is responding
+      - name: Verify application accessibility
+        run: |
+          echo "Testing application accessibility..."
+          
+          # First, check what's listening inside the container
+          echo "Checking ports inside container:"
+          docker exec webapp netstat -tlnp 2>/dev/null || docker exec webapp ss -tlnp 2>/dev/null || echo "Cannot check ports inside container"
+          
+          # Check Docker port mapping
+          echo "Docker port mapping:"
+          docker port webapp
+          
+          # Test connection with more details
+          echo "Testing HTTP connection:"
+          if curl -v --connect-timeout 10 http://localhost:8080/ 2>&1; then
+            echo "✓ Application is accessible!"
+          else
+            echo "✗ Application is not accessible"
+            echo "Trying alternative approaches..."
+            
+            # Try connecting directly to container
+            CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' webapp)
+            echo "Container IP: $CONTAINER_IP"
+            
+            if [ ! -z "$CONTAINER_IP" ]; then
+              echo "Testing direct container connection:"
+              curl -v --connect-timeout 5 http://$CONTAINER_IP:8080/ 2>&1 || echo "Direct connection failed"
+            fi
+            
+            echo "Container logs:"
+            docker logs webapp --tail 30
+            exit 1
+          fi
+
+      # Run OWASP ZAP baseline scan with better configuration
+      - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
           target: "http://localhost:8080"
-          cmd_options: "-a -j -w zap-baseline.sarif"
+          cmd_options: "-a -j -l INFO"
         continue-on-error: true
 
-      - name: Upload ZAP Baseline SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: zap-baseline.sarif
-        continue-on-error: true
-
-      # OWASP ZAP Full Scan (SARIF output)
-      - name: OWASP ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.10.0
-        with:
-          target: "http://localhost:8080"
-          cmd_options: "-a -j -w zap-full.sarif"
-        continue-on-error: true
-
-      - name: Upload ZAP Full Scan SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: zap-full.sarif
-        continue-on-error: true
-
-      # Upload HTML/JSON reports
-      - name: Upload ZAP reports
+      # Upload ZAP HTML report
+      - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: zap-reports
+          name: zap-baseline-report
           path: |
             report_html.html
             report_json.json
             report_md.md
 
-      - name: Cleanup container
+      # Run OWASP ZAP Full Scan (only if baseline passes or we want to continue)
+      - name: Run OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: "http://localhost:8080"
+          cmd_options: "-a -j"
+        continue-on-error: true
+
+      # Upload ZAP Full Scan report
+      - name: Upload ZAP Full Scan report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-full-scan-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+
+      # Upload ZAP SARIF results to GitHub Security tab (if file exists)
+      - name: Upload ZAP SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+      # Clean up container
+      - name: Stop and remove container
         if: always()
         run: |
           docker stop webapp || true
           docker rm webapp || true
 
-  # ==========================
-  # Deploy to Amazon ECS
-  # ==========================
   deploy:
     name: Deploy to Amazon ECS
     runs-on: ubuntu-latest
-    needs: [dast]
-    environment: production
     permissions:
       actions: read
       contents: read
       issues: write
       security-events: write
+    environment: production
+    needs: [dast]   # Deploy only if DAST passes
 
     steps:
       - name: Approval
@@ -202,11 +282,11 @@ jobs:
           issue-body: "Please approve or deny the deployment of version v1.3.5."
           timeout-minutes: 3       
 
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -214,9 +294,9 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
 
-      - name: Build and push image
+      - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -224,4 +304,33 @@ jobs:
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/_
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.build-image.outputs.image }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
