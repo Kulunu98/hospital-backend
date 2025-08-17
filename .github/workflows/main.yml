@@ -5,16 +5,20 @@ on:
     branches:
       - main
 
-# Environment variables for AWS and ECS deployment
+# ----------------------------
+# Environment variables for AWS and ECS
+# ----------------------------
 env:
   AWS_REGION: ap-south-1                   # AWS region
-  ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
-  ECS_SERVICE: web-ecs-service             # Amazon ECS service name
-  ECS_CLUSTER: web-ecs-cluster             # Amazon ECS cluster name
+  ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository
+  ECS_SERVICE: web-ecs-service             # ECS service name
+  ECS_CLUSTER: web-ecs-cluster             # ECS cluster name
   ECS_TASK_DEFINITION: ecs-task-revision36.json # ECS task definition file
   CONTAINER_NAME: web-app                  # Container name in ECS task
 
+# ----------------------------
 # Permissions for jobs
+# ----------------------------
 permissions:
   actions: read
   contents: read
@@ -31,7 +35,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Monitor project dependencies in Snyk dashboard
+      # Monitor dependencies in Snyk dashboard
       - name: Monitor project in Snyk
         uses: snyk/actions/node@master
         env:
@@ -48,7 +52,7 @@ jobs:
           command: test
           args: --sarif-file-output=snyk.sarif --fail-on=all
 
-      # Upload SARIF report to GitHub Code Scanning
+      # Upload Snyk SARIF to GitHub Code Scanning
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -63,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ] # Node.js languages
+        language: [ 'javascript' ]
 
     steps:
       - name: Checkout repository
@@ -73,9 +77,9 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
+          languages: ${{ matrix.language}}
 
-      # Perform CodeQL analysis
+      # Run CodeQL analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
@@ -85,7 +89,7 @@ jobs:
   dast:
     name: OWASP ZAP Dynamic Analysis
     runs-on: ubuntu-latest
-    needs: [snyk, codeQL]  # Run only after Snyk & CodeQL succeed
+    needs: [snyk, codeQL]
 
     steps:
       - name: Checkout code
@@ -95,46 +99,47 @@ jobs:
       - name: Build Docker image
         run: docker build -t webapp-test .
 
-      # Create dedicated Docker network so ZAP can resolve app by container name
+      # Create a dedicated Docker network so ZAP can access app container by name
       - name: Create Docker network
         run: docker network create zapnet || true
 
-      # Run app container on custom network
+      # Run the app container on custom network
       - name: Run application container
         run: |
           docker run -d --name webapp --network zapnet -p 8080:8080 webapp-test
           sleep 25  # Wait until the app is fully ready
 
-      # Prepare writable folder for ZAP reports to avoid permission issues
-      - name: Prepare reports folder
+      # Create a writable folder for ZAP workspace and reports
+      - name: Prepare ZAP workspace
         run: |
-          mkdir -p $PWD/zap-reports
-          chmod 777 $PWD/zap-reports
+          mkdir -p $PWD/zap-workspace
+          chmod 777 $PWD/zap-workspace
 
-      # Run OWASP ZAP baseline scan (passive scan)
+      # Run ZAP baseline scan
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://webapp:8080"           # App reachable via custom network
+          target: "http://webapp:8080"           # reachable via custom Docker network
           cmd_options: "-a"
           allow_issue_writing: false
           docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+          workspace: $PWD/zap-workspace         # Use dedicated workspace
         env:
-          REPORTS_DIR: $PWD/zap-reports        # Mount reports folder
+          REPORTS_DIR: $PWD/zap-workspace
 
-      # Upload human-readable HTML report as artifact
+      # Upload human-readable HTML report as GitHub artifact
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: zap-reports/report_html.html
+          path: zap-workspace/report_html.html
 
       # Upload SARIF report to GitHub Security tab
       - name: Upload ZAP SARIF results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: zap-reports/report_json.json
+          sarif_file: zap-workspace/report_json.json
 
 # ----------------------------
 # Job 4: Deployment to Amazon ECS
@@ -148,7 +153,7 @@ jobs:
       issues: write
       security-events: write
     environment: production
-    needs: [dast]   # Deploy only if DAST passes
+    needs: [dast]
 
     steps:
       # Require manual approval before deployment
@@ -178,8 +183,8 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      # Build, tag and push Docker image to ECR
-      - name: Build, tag, and push image to Amazon ECR
+      # Build, tag, and push Docker image to ECR
+      - name: Build, tag, and push image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
