@@ -48,7 +48,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: snyk.sarif
-          
+
   codeQL:
     name: CodeQL Static Analysis
     runs-on: ubuntu-latest
@@ -79,40 +79,59 @@ jobs:
         uses: actions/checkout@v4
 
       # Build Docker image for the app
-      - name: Build and run application
+      - name: Build Docker image
+        run: docker build -t webapp-test .
+
+      # Create dedicated Docker network for ZAP & app communication
+      - name: Create Docker network
+        run: docker network create zapnet || true
+
+      # Run application container in network
+      - name: Run application container
         run: |
-          docker build -t webapp-test .
-          docker run -d -p 8080:8080 --name webapp webapp-test
+          docker run -d --name webapp --network zapnet -p 8080:8080 webapp-test
           sleep 25  # wait for app to become ready
 
-      # Run OWASP ZAP Baseline Scan (passive)
+      # Prepare folder for ZAP reports
+      - name: Prepare ZAP reports folder
+        run: |
+          mkdir -p $PWD/zap-reports
+          chmod 777 $PWD/zap-reports
+
+      # Run OWASP ZAP Baseline Scan (passive scan)
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://localhost:8080"
-          cmd_options: "-a"                 # Aggressive passive scan
-          allow_issue_writing: false        # Do not open GitHub issues automatically
+          target: "http://webapp:8080"
+          cmd_options: "-a"
+          allow_issue_writing: false
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+        env:
+          REPORTS_DIR: $PWD/zap-reports
 
       # Upload ZAP HTML report
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: report_html.html
+          path: zap-reports/report_html.html
 
-      # Run OWASP ZAP Full Scan (active)
+      # Run OWASP ZAP Full Scan (active scan)
       - name: Run OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.10.0
         with:
-          target: "http://localhost:8080"
-          fail_on_warn: true   # Fail pipeline if medium/high issues are found
+          target: "http://webapp:8080"
+          fail_on_warn: true
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+        env:
+          REPORTS_DIR: $PWD/zap-reports
 
       # Upload ZAP SARIF results
       - name: Upload ZAP SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: zap-results.sarif
+          sarif_file: zap-reports/zap-results.sarif
 
   deploy:
     name: Deploy to Amazon ECS
@@ -124,9 +143,8 @@ jobs:
       security-events: write
     environment: production
     needs: [dast]   # Deployment runs only if DAST passes
-
     steps:
-      # Require manual approval before deploying to production
+      # Require manual approval before deploying
       - name: Approval
         uses: trstringer/manual-approval@v1
         with:
@@ -142,7 +160,7 @@ jobs:
 
       # Configure AWS credentials for deployment
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
+        uses: aws-actions/configure-aws-credentials@v0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -151,7 +169,7 @@ jobs:
       # Authenticate to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
+        uses: aws-actions/amazon-ecr-login@v0
 
       # Build, tag and push image to ECR
       - name: Build, tag, and push image to Amazon ECR
@@ -166,21 +184,21 @@ jobs:
 
       # Run Trivy scan on container image
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      # Upload Trivy scan results to GitHub Security tab
-      - name: Upload Trivy scan results to GitHub Security tab
+      # Upload Trivy scan results
+      - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # Replace image in ECS task definition with the new image
-      - name: Fill in the new image ID in the Amazon ECS task definition
+      # Replace image in ECS task definition
+      - name: Fill in new image ID in ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -188,8 +206,8 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
-      # Deploy new ECS task definition to service
-      - name: Deploy Amazon ECS task definition
+      # Deploy new ECS task definition
+      - name: Deploy ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
