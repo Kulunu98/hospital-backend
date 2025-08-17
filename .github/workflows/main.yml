@@ -61,6 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # language: [ 'javascript', 'typescript' ] # Node.js languages
         language: [ 'javascript' ]   # Node.js languages
     steps:
       - name: Checkout repository
@@ -127,8 +128,13 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
+          # format: 'table'
           format: 'sarif'
           output: 'trivy-results.sarif'
+          # exit-code: '1'
+          # ignore-unfixed: true
+          # vuln-type: 'os,library'
+          # severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy scan results to GitHub Security tab
         if: always()
