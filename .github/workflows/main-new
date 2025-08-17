@@ -5,12 +5,13 @@ on:
     branches:
       - main
 
+# Set environment variables for AWS and ECS
 env:
   AWS_REGION: ap-south-1                   # AWS region
   ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
   ECS_SERVICE: web-ecs-service             # Amazon ECS service name
   ECS_CLUSTER: web-ecs-cluster             # Amazon ECS cluster name
-  ECS_TASK_DEFINITION: ecs-task-revision36.json # Path to ECS task definition file
+  ECS_TASK_DEFINITION: ecs-task-revision36.json # Path to ECS task definition
   CONTAINER_NAME: web-app                  # Container name in ECS task definition
 
 permissions:
@@ -18,10 +19,10 @@ permissions:
   contents: read
   security-events: write
 
-# =====================
-# Job 1: Snyk Scan
-# =====================
 jobs:
+  # ----------------------------
+  # Snyk Scan (Static & Dependency Analysis)
+  # ----------------------------
   snyk:
     name: Snyk SCA Scan
     runs-on: ubuntu-latest
@@ -52,33 +53,33 @@ jobs:
         with:
           sarif_file: snyk.sarif
 
-# =====================
-# Job 2: CodeQL Analysis
-# =====================
+  # ----------------------------
+  # CodeQL Static Analysis
+  # ----------------------------
   codeQL:
-    name: CodeQL Static Analysis
+    name: CodeQL Analysis
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ] # Node.js languages
+        language: [ 'javascript' ] # Define languages for CodeQL (Node.js here)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Initialize CodeQL for JavaScript
+      # Initialize CodeQL
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
 
-      # Run CodeQL analysis and upload results
+      # Perform CodeQL analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-# =====================
-# Job 3: DAST - OWASP ZAP
-# =====================
+  # ----------------------------
+  # DAST: OWASP ZAP Dynamic Analysis (Fixed)
+  # ----------------------------
   dast:
     name: OWASP ZAP Dynamic Analysis
     runs-on: ubuntu-latest
@@ -87,58 +88,50 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Create directory for ZAP reports with write permissions
-      - name: Create ZAP reports directory
-        run: |
-          mkdir -p $PWD/zap-reports
-          chmod 777 $PWD/zap-reports
-
-      # Create a dedicated Docker network for app & ZAP communication
-      - name: Create Docker network
-        run: docker network create zapnet || true
-
       # Build and run the application container
       - name: Build and run application
         run: |
           docker build -t webapp-test .
-          docker run -d --name webapp --network zapnet -p 8080:8080 webapp-test
+          docker run -d --name webapp -p 8080:8080 webapp-test
           sleep 25  # wait for app to become ready
 
-      # Run OWASP ZAP baseline scan (passive scan)
+      # Run OWASP ZAP baseline scan (internal container workspace)
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://webapp:8080"
-          cmd_options: "-a"                  # Enable aggressive passive scan
-          allow_issue_writing: false         # Don’t open GitHub issues automatically
+          target: "http://localhost:8080"    # Use localhost for container port
+          cmd_options: "-a"                  # Aggressive passive scan
+          allow_issue_writing: false         # Don’t create GitHub issues automatically
           docker_name: "ghcr.io/zaproxy/zaproxy:stable"
-        env:
-          REPORTS_DIR: $PWD/zap-reports
-          DOCKER_NETWORK: zapnet
 
-      # Upload human-readable HTML report
+      # Copy the reports from ZAP container to GitHub workspace
+      - name: Copy ZAP reports
+        run: |
+          docker cp $(docker ps -q -f ancestor=ghcr.io/zaproxy/zaproxy:stable):/zap/wrk/report_json.json ./report_json.json
+          docker cp $(docker ps -q -f ancestor=ghcr.io/zaproxy/zaproxy:stable):/zap/wrk/report_md.md ./report_md.md
+          docker cp $(docker ps -q -f ancestor=ghcr.io/zaproxy/zaproxy:stable):/zap/wrk/report_html.html ./report_html.html
+
+      # Upload human-readable HTML report as artifact
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: $PWD/zap-reports/*.html
+          path: report_html.html
 
       # Upload SARIF results to GitHub Security tab
       - name: Upload ZAP SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: $PWD/zap-reports/*.sarif
+          sarif_file: report_json.json
 
-      # Cleanup containers and network
+      # Cleanup application container
       - name: Cleanup
-        run: |
-          docker rm -f webapp || true
-          docker network rm zapnet || true
+        run: docker rm -f webapp || true
 
-# =====================
-# Job 4: Deploy to Amazon ECS
-# =====================
+  # ----------------------------
+  # Deployment to Amazon ECS
+  # ----------------------------
   deploy:
     name: Deploy to Amazon ECS
     runs-on: ubuntu-latest
@@ -148,25 +141,25 @@ jobs:
       issues: write
       security-events: write
     environment: production
-    needs: [dast]   # Deployment runs only if DAST passes
+    needs: [dast]   # Deploy only if DAST passes
     steps:
-      # Require manual approval
+      # Require manual approval before deploying
       - name: Approval
         uses: trstringer/manual-approval@v1
         with:
-            secret: ${{ github.TOKEN }}
-            approvers: Kulunu98
-            minimum-approvals: 1
-            issue-title: "Deploying v1.3.5 to production"
-            issue-body: "Please approve or deny the deployment of version v1.3.5."
-            timeout-minutes: 3       
+          secret: ${{ github.TOKEN }}
+          approvers: Kulunu98
+          minimum-approvals: 1
+          issue-title: "Deploying v1.3.5 to production"
+          issue-body: "Please approve or deny the deployment of version v1.3.5."
+          timeout-minutes: 3       
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Configure AWS credentials for deployment
+      # Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -175,9 +168,9 @@ jobs:
       # Authenticate to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
+        uses: aws-actions/amazon-ecr-login@v1
 
-      # Build, tag, and push image to ECR
+      # Build, tag and push container image
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
@@ -188,22 +181,22 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Run Trivy vulnerability scanner
+      # Run Trivy vulnerability scan
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
           output: 'trivy-results.sarif'
 
       # Upload Trivy scan results to GitHub Security tab
-      - name: Upload Trivy scan results
+      - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # Update ECS task definition with new image
+      # Render ECS task definition with new image
       - name: Fill in the new image ID in the ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -212,11 +205,5 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
-      # Deploy updated ECS task definition
-      - name: Deploy ECS task
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+      # Deploy ECS service
+      - name: Deploy Amazon ECS task defi
