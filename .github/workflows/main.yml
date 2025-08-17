@@ -88,35 +88,79 @@ jobs:
       # Start the app container with proper networking and environment
       - name: Start application container
         run: |
+          # Try without --network host first, using port mapping
           docker run -d \
             --name webapp \
-            --network host \
             -p 8080:8080 \
-            -e MONGO_URI="mongodb://localhost:27017/hospital_test" \
+            -e MONGO_URI="mongodb://host.docker.internal:27017/hospital_test" \
             -e NODE_ENV="test" \
             -e PORT="8080" \
             webapp-test
+          
+          # Give it a moment to start
+          sleep 10
+          
+          # Check if container is running
+          if ! docker ps | grep webapp; then
+            echo "Container failed to start, checking logs:"
+            docker logs webapp
+            exit 1
+          fi
 
       # Wait for application to be ready with health check
       - name: Wait for application to be ready
         run: |
           echo "Waiting for application to start..."
+          
+          # First, let's check if the container is running
+          echo "Checking container status..."
+          docker ps -a | grep webapp || echo "Container not found"
+          
+          # Check container logs
+          echo "Container logs:"
+          docker logs webapp
+          
           timeout=120
           elapsed=0
           
           while [ $elapsed -lt $timeout ]; do
-            if curl -f http://localhost:8080/health 2>/dev/null || curl -f http://localhost:8080 2>/dev/null; then
+            # More detailed debugging
+            echo "Testing connectivity (attempt $((elapsed/5 + 1)))..."
+            
+            # Test with verbose curl
+            if curl -v http://localhost:8080 2>&1 | head -10; then
               echo "Application is ready!"
               break
             fi
+            
+            # Also try with wget as backup
+            if wget -q --spider http://localhost:8080 2>/dev/null; then
+              echo "Application is ready (via wget)!"
+              break
+            fi
+            
+            # Check if process is listening on port 8080
+            if netstat -tlnp 2>/dev/null | grep ':8080 ' || ss -tlnp 2>/dev/null | grep ':8080 '; then
+              echo "Port 8080 is being used by some process"
+            else
+              echo "No process listening on port 8080"
+            fi
+            
             echo "Waiting... ($elapsed/$timeout seconds)"
             sleep 5
             elapsed=$((elapsed + 5))
           done
           
           if [ $elapsed -ge $timeout ]; then
-            echo "Application failed to start within $timeout seconds"
-            docker logs webapp
+            echo "Application failed to respond within $timeout seconds"
+            echo "Final container status:"
+            docker ps -a | grep webapp
+            echo "Final container logs:"
+            docker logs webapp --tail 50
+            echo "Network information:"
+            docker port webapp || echo "No port mapping found"
+            echo "Process information:"
+            netstat -tlnp | grep ':8080' || echo "No process on port 8080"
             exit 1
           fi
 
