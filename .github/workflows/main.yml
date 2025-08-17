@@ -234,7 +234,18 @@ jobs:
           cmd_options: "-a -j"
         continue-on-error: true
 
-      # Upload ZAP SARIF results to GitHub Security tab
+      # Upload ZAP Full Scan report
+      - name: Upload ZAP Full Scan report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-full-scan-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+
+      # Upload ZAP SARIF results to GitHub Security tab (if file exists)
       - name: Upload ZAP SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
