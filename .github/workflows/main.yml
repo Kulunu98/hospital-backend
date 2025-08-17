@@ -88,22 +88,30 @@ jobs:
       # Start the app container with proper networking and environment
       - name: Start application container
         run: |
-          # Try without --network host first, using port mapping
+          # Use host networking to avoid Docker networking issues
           docker run -d \
             --name webapp \
-            -p 8080:8080 \
-            -e MONGO_URI="mongodb://host.docker.internal:27017/hospital_test" \
+            --network host \
+            -e MONGO_URI="mongodb://127.0.0.1:27017/hospital_test" \
             -e NODE_ENV="test" \
             -e PORT="8080" \
+            -e HOST="0.0.0.0" \
             webapp-test
           
-          # Give it a moment to start
-          sleep 10
+          # Give it more time to start
+          sleep 20
+          
+          # Check container status
+          echo "Container status:"
+          docker ps -a
+          
+          echo "Container logs:"
+          docker logs webapp
           
           # Check if container is running
-          if ! docker ps | grep webapp; then
-            echo "Container failed to start, checking logs:"
-            docker logs webapp
+          if ! docker ps | grep webapp | grep "Up"; then
+            echo "Container is not running properly"
+            docker logs webapp --tail 50
             exit 1
           fi
 
@@ -168,7 +176,36 @@ jobs:
       - name: Verify application accessibility
         run: |
           echo "Testing application accessibility..."
-          curl -I http://localhost:8080 || (echo "App not accessible" && docker logs webapp && exit 1)
+          
+          # First, check what's listening inside the container
+          echo "Checking ports inside container:"
+          docker exec webapp netstat -tlnp 2>/dev/null || docker exec webapp ss -tlnp 2>/dev/null || echo "Cannot check ports inside container"
+          
+          # Check Docker port mapping
+          echo "Docker port mapping:"
+          docker port webapp
+          
+          # Test connection with more details
+          echo "Testing HTTP connection:"
+          if curl -v --connect-timeout 10 http://localhost:8080/ 2>&1; then
+            echo "✓ Application is accessible!"
+          else
+            echo "✗ Application is not accessible"
+            echo "Trying alternative approaches..."
+            
+            # Try connecting directly to container
+            CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' webapp)
+            echo "Container IP: $CONTAINER_IP"
+            
+            if [ ! -z "$CONTAINER_IP" ]; then
+              echo "Testing direct container connection:"
+              curl -v --connect-timeout 5 http://$CONTAINER_IP:8080/ 2>&1 || echo "Direct connection failed"
+            fi
+            
+            echo "Container logs:"
+            docker logs webapp --tail 30
+            exit 1
+          fi
 
       # Run OWASP ZAP baseline scan with better configuration
       - name: Run OWASP ZAP Baseline Scan
