@@ -5,6 +5,7 @@ on:
     branches:
       - main
 
+# Environment variables for AWS and ECS deployment
 env:
   AWS_REGION: ap-south-1                   # AWS region
   ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
@@ -18,6 +19,9 @@ permissions:
   contents: read
   security-events: write
 
+# ----------------------------
+# Job 1: Snyk Static & Dependency Analysis
+# ----------------------------
 jobs:
   snyk:
     name: Snyk SCA Scan
@@ -27,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
 
       # Monitor project dependencies in Snyk dashboard
-      - name: Monitor project in Snyk dashboard
+      - name: Monitor project in Snyk
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -49,6 +53,9 @@ jobs:
         with:
           sarif_file: snyk.sarif
 
+# ----------------------------
+# Job 2: CodeQL Static Analysis
+# ----------------------------
   codeQL:
     name: CodeQL Static Analysis
     runs-on: ubuntu-latest
@@ -67,14 +74,18 @@ jobs:
         with:
           languages: ${{ matrix.language }}
 
-      # Run CodeQL analysis and upload results
+      # Run CodeQL analysis and upload results automatically
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
+# ----------------------------
+# Job 3: DAST - OWASP ZAP Dynamic Analysis
+# ----------------------------
   dast:
     name: OWASP ZAP Dynamic Analysis
     runs-on: ubuntu-latest
     needs: [snyk, codeQL]   # Run only after Snyk & CodeQL succeed
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -83,40 +94,50 @@ jobs:
       - name: Build Docker image
         run: docker build -t webapp-test .
 
-      # Create dedicated Docker network so ZAP can reach app container by name
+      # Create a dedicated Docker network so ZAP can resolve the app container by name
       - name: Create Docker network
         run: docker network create zapnet || true
 
-      # Run app container on the custom network
+      # Run app container on custom network
       - name: Run application container
         run: |
           docker run -d --name webapp --network zapnet -p 8080:8080 webapp-test
           sleep 25  # Wait for app to be fully ready
 
-      # Prepare writable reports folder
+      # Prepare folder to save ZAP reports (writable by container)
       - name: Prepare reports folder
         run: |
           mkdir -p $PWD/zap-reports
           chmod 777 $PWD/zap-reports
 
-      # Run ZAP baseline scan (passive scan)
+      # Run ZAP baseline scan using internal workspace to avoid permission errors
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://webapp:8080"           # Use container name, reachable via custom network
+          target: "http://webapp:8080"           # reachable via custom network
           cmd_options: "-a"
           allow_issue_writing: false
           docker_name: "ghcr.io/zaproxy/zaproxy:stable"
         env:
           REPORTS_DIR: $PWD/zap-reports
 
-      # Upload human-readable HTML report
+      # Upload human-readable HTML report as GitHub artifact
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
           path: zap-reports/report_html.html
 
+      # Upload ZAP SARIF results to GitHub Security tab
+      - name: Upload ZAP SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zap-reports/report_json.json
+
+# ----------------------------
+# Job 4: Deployment to Amazon ECS
+# ----------------------------
   deploy:
     name: Deploy to Amazon ECS
     runs-on: ubuntu-latest
@@ -129,6 +150,7 @@ jobs:
     needs: [dast]   # Deployment runs only if DAST passes
 
     steps:
+      # Require manual approval before deploying
       - name: Approval
         uses: trstringer/manual-approval@v1
         with:
@@ -144,7 +166,7 @@ jobs:
 
       # Configure AWS credentials for deployment
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -153,9 +175,9 @@ jobs:
       # Authenticate to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
+        uses: aws-actions/amazon-ecr-login@v1
 
-      # Build, tag and push image to ECR
+      # Build, tag and push image to Amazon ECR
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
@@ -166,23 +188,23 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Run Trivy scan on container image
+      # Run Trivy vulnerability scanner on container image
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
           output: 'trivy-results.sarif'
 
       # Upload Trivy SARIF results to GitHub Security tab
-      - name: Upload Trivy scan results to GitHub Security tab
+      - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
       # Update ECS task definition with new image
-      - name: Fill in the new image ID in the Amazon ECS task definition
+      - name: Fill in new image ID in ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
