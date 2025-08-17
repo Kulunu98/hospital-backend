@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ] # Define languages for CodeQL (Node.js here)
+        language: [ 'javascript' ] # Node.js language
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -78,43 +78,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Build Docker image for app
-      - name: Build Docker image
-        run: docker build -t webapp-test .
-
-      # Run app container inside custom network for ZAP to access
-      - name: Run app container
+      # Build Docker image for the app
+      - name: Build and run application
         run: |
-          docker network create zapnet
-          docker run -d --rm --name webapp --network zapnet -p 8080:8080 webapp-test
-          sleep 25   # wait for app to become ready
+          docker build -t webapp-test .
+          docker run -d -p 8080:8080 --name webapp webapp-test
+          sleep 25  # wait for app to become ready
 
-      # Run OWASP ZAP baseline scan (passive scan)
+      # Run OWASP ZAP Baseline Scan (passive)
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://webapp:8080"      # Use container name instead of localhost
+          target: "http://localhost:8080"
           cmd_options: "-a"                 # Aggressive passive scan
-        env:
-          DOCKER_NETWORK: zapnet            # Attach ZAP to same network
+          allow_issue_writing: false        # Do not open GitHub issues automatically
 
-      # Upload human-readable HTML report as artifact
+      # Upload ZAP HTML report
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
           path: report_html.html
 
-      # Run OWASP ZAP full scan (active scan)
+      # Run OWASP ZAP Full Scan (active)
       - name: Run OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.10.0
         with:
-          target: "http://webapp:8080"
-          fail_on_warn: true                # Fail if medium/high issues found
-        env:
-          DOCKER_NETWORK: zapnet
+          target: "http://localhost:8080"
+          fail_on_warn: true   # Fail pipeline if medium/high issues are found
 
-      # Upload ZAP results in SARIF format to GitHub Security tab
+      # Upload ZAP SARIF results
       - name: Upload ZAP SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
@@ -130,7 +123,7 @@ jobs:
       issues: write
       security-events: write
     environment: production
-    needs: [dast]   # Deployment runs only if DAST also passes
+    needs: [dast]   # Deployment runs only if DAST passes
 
     steps:
       # Require manual approval before deploying to production
