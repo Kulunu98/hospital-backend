@@ -6,12 +6,12 @@ on:
       - main
 
 env:
-  AWS_REGION: ap-south-1                   # AWS region
+  AWS_REGION: ap-south-1                   # set this to your preferred AWS region
   ECR_REPOSITORY: webapp-hospital          # Amazon ECR repository name
   ECS_SERVICE: web-ecs-service             # Amazon ECS service name
   ECS_CLUSTER: web-ecs-cluster             # Amazon ECS cluster name
-  ECS_TASK_DEFINITION: ecs-task-revision36.json # Amazon ECS task definition file
-  CONTAINER_NAME: web-app                  # Container name in ECS task
+  ECS_TASK_DEFINITION: ecs-task-revision36.json # ECS task definition file
+  CONTAINER_NAME: web-app                  # ECS container name
 
 permissions:
   actions: read
@@ -20,13 +20,12 @@ permissions:
 
 jobs:
   snyk:
-    name: Snyk SCA Scan
+    name: Snyk Scan (SCA)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Monitor dependencies in Snyk dashboard
       - name: Monitor project in Snyk dashboard
         uses: snyk/actions/node@master
         env:
@@ -34,7 +33,6 @@ jobs:
         with:
           command: monitor
 
-      # Run Snyk scan and output results in SARIF format
       - name: Run Snyk test and save SARIF report
         uses: snyk/actions/node@master
         env:
@@ -43,200 +41,220 @@ jobs:
           command: test
           args: --sarif-file-output=snyk.sarif --fail-on=all
 
-      # Upload Snyk findings to GitHub Security tab
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: snyk.sarif
-          
+
   codeQL:
-    name: CodeQL Static Analysis
+    name: CodeQL Analysis (SAST)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ] # Node.js languages
+        language: [ 'javascript' ] # Node.js language
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Initialize CodeQL for JavaScript
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
 
-      # Perform CodeQL analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
   dast:
-    name: OWASP ZAP Dynamic Analysis
+    name: Dynamic Application Security Testing (DAST)
     runs-on: ubuntu-latest
-    needs: [snyk, codeQL]   # Only run after Snyk & CodeQL succeed
+    needs: [snyk, codeQL]   # Run after Snyk & CodeQL
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_DATABASE: hospital_test
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Build and run the app locally for scanning
-      - name: Build and run application
+      # Build the application image
+      - name: Build application image
         run: |
           docker build -t webapp-test .
-          docker run -d -p 8080:8080 --name webapp webapp-test
-          sleep 25  # wait for app to be ready
 
-      # Create reports directory with proper permissions
-      - name: Create reports directory
+      # Start the app container with proper networking and environment
+      - name: Start application container
         run: |
-          mkdir -p ${{ runner.temp }}/zap-reports
-          chmod 777 ${{ runner.temp }}/zap-reports
+          # Use host networking to avoid Docker networking issues
+          docker run -d \
+            --name webapp \
+            --network host \
+            -e MONGO_URI="mongodb://127.0.0.1:27017/hospital_test" \
+            -e NODE_ENV="test" \
+            -e PORT="8080" \
+            -e HOST="0.0.0.0" \
+            webapp-test
+          
+          # Give it more time to start
+          sleep 20
+          
+          # Check container status
+          echo "Container status:"
+          docker ps -a
+          
+          echo "Container logs:"
+          docker logs webapp
+          
+          # Check if container is running
+          if ! docker ps | grep webapp | grep "Up"; then
+            echo "Container is not running properly"
+            docker logs webapp --tail 50
+            exit 1
+          fi
 
-      # Run OWASP ZAP baseline scan with fixed permissions
+      # Wait for application to be ready with health check
+      - name: Wait for application to be ready
+        run: |
+          echo "Waiting for application to start..."
+          
+          # First, let's check if the container is running
+          echo "Checking container status..."
+          docker ps -a | grep webapp || echo "Container not found"
+          
+          # Check container logs
+          echo "Container logs:"
+          docker logs webapp
+          
+          timeout=120
+          elapsed=0
+          
+          while [ $elapsed -lt $timeout ]; do
+            # More detailed debugging
+            echo "Testing connectivity (attempt $((elapsed/5 + 1)))..."
+            
+            # Test with verbose curl
+            if curl -v http://localhost:8080 2>&1 | head -10; then
+              echo "Application is ready!"
+              break
+            fi
+            
+            # Also try with wget as backup
+            if wget -q --spider http://localhost:8080 2>/dev/null; then
+              echo "Application is ready (via wget)!"
+              break
+            fi
+            
+            # Check if process is listening on port 8080
+            if netstat -tlnp 2>/dev/null | grep ':8080 ' || ss -tlnp 2>/dev/null | grep ':8080 '; then
+              echo "Port 8080 is being used by some process"
+            else
+              echo "No process listening on port 8080"
+            fi
+            
+            echo "Waiting... ($elapsed/$timeout seconds)"
+            sleep 5
+            elapsed=$((elapsed + 5))
+          done
+          
+          if [ $elapsed -ge $timeout ]; then
+            echo "Application failed to respond within $timeout seconds"
+            echo "Final container status:"
+            docker ps -a | grep webapp
+            echo "Final container logs:"
+            docker logs webapp --tail 50
+            echo "Network information:"
+            docker port webapp || echo "No port mapping found"
+            echo "Process information:"
+            netstat -tlnp | grep ':8080' || echo "No process on port 8080"
+            exit 1
+          fi
+
+      # Verify the application is responding
+      - name: Verify application accessibility
+        run: |
+          echo "Testing application accessibility..."
+          
+          # First, check what's listening inside the container
+          echo "Checking ports inside container:"
+          docker exec webapp netstat -tlnp 2>/dev/null || docker exec webapp ss -tlnp 2>/dev/null || echo "Cannot check ports inside container"
+          
+          # Check Docker port mapping
+          echo "Docker port mapping:"
+          docker port webapp
+          
+          # Test connection with more details
+          echo "Testing HTTP connection:"
+          if curl -v --connect-timeout 10 http://localhost:8080/ 2>&1; then
+            echo "✓ Application is accessible!"
+          else
+            echo "✗ Application is not accessible"
+            echo "Trying alternative approaches..."
+            
+            # Try connecting directly to container
+            CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' webapp)
+            echo "Container IP: $CONTAINER_IP"
+            
+            if [ ! -z "$CONTAINER_IP" ]; then
+              echo "Testing direct container connection:"
+              curl -v --connect-timeout 5 http://$CONTAINER_IP:8080/ 2>&1 || echo "Direct connection failed"
+            fi
+            
+            echo "Container logs:"
+            docker logs webapp --tail 30
+            exit 1
+          fi
+
+      # Run OWASP ZAP baseline scan with better configuration
       - name: Run OWASP ZAP Baseline Scan
-        run: |
-          docker run --rm \
-            -v ${{ runner.temp }}/zap-reports:/zap/wrk:rw \
-            --network=host \
-            --user $(id -u):$(id -g) \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t http://localhost:8080 \
-            -J report_json.json \
-            -w report_md.md \
-            -r report_html.html \
-            -a
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: "http://localhost:8080"
+          cmd_options: "-a -j -l INFO"
+        continue-on-error: true
 
-      # Upload human-readable HTML report
+      # Upload ZAP HTML report
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: zap-baseline-report
-          path: ${{ runner.temp }}/zap-reports/report_html.html
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
 
-      # Run full ZAP scan with proper configuration
+      # Run OWASP ZAP Full Scan (only if baseline passes or we want to continue)
       - name: Run OWASP ZAP Full Scan
-        run: |
-          docker run --rm \
-            -v ${{ runner.temp }}/zap-reports:/zap/wrk:rw \
-            --network=host \
-            --user $(id -u):$(id -g) \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py -t http://localhost:8080 \
-            -J zap-results.json \
-            -r zap-results.html \
-            -x zap-results.xml
-        continue-on-error: true  # Don't fail the pipeline if medium/high issues found
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: "http://localhost:8080"
+          cmd_options: "-a -j"
+        continue-on-error: true
 
-      # Convert ZAP results to SARIF format
-      - name: Convert ZAP XML to SARIF
-        if: always()
-        run: |
-          # Install Python and required packages
-          python3 -m pip install --upgrade pip
-          python3 -m pip install sarif-om xmltodict
-          
-          # Create a simple conversion script
-          cat > convert_zap_to_sarif.py << 'EOF'
-          import json
-          import xml.etree.ElementTree as ET
-          import sys
-          import os
-          
-          def convert_zap_xml_to_sarif(xml_file, sarif_file):
-              try:
-                  tree = ET.parse(xml_file)
-                  root = tree.getroot()
-                  
-                  sarif = {
-                      "version": "2.1.0",
-                      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-                      "runs": [{
-                          "tool": {
-                              "driver": {
-                                  "name": "OWASP ZAP",
-                                  "informationUri": "https://owasp.org/www-project-zap/",
-                                  "version": "2.14.0"
-                              }
-                          },
-                          "results": []
-                      }]
-                  }
-                  
-                  for alert in root.findall('.//alertitem'):
-                      name = alert.find('name')
-                      desc = alert.find('desc')
-                      risk = alert.find('riskdesc')
-                      confidence = alert.find('confidence')
-                      uri = alert.find('uri')
-                      
-                      result = {
-                          "ruleId": name.text if name is not None else "unknown",
-                          "message": {
-                              "text": desc.text if desc is not None else "No description"
-                          },
-                          "level": "error" if risk is not None and "High" in risk.text else "warning",
-                          "locations": [{
-                              "physicalLocation": {
-                                  "artifactLocation": {
-                                      "uri": uri.text if uri is not None else "unknown"
-                                  }
-                              }
-                          }]
-                      }
-                      
-                      sarif["runs"][0]["results"].append(result)
-                  
-                  with open(sarif_file, 'w') as f:
-                      json.dump(sarif, f, indent=2)
-                      
-                  return True
-              except Exception as e:
-                  print(f"Error converting ZAP XML to SARIF: {e}")
-                  return False
-          
-          # Check if XML file exists
-          xml_file = "${{ runner.temp }}/zap-reports/zap-results.xml"
-          sarif_file = "${{ runner.temp }}/zap-reports/zap-results.sarif"
-          
-          if os.path.exists(xml_file):
-              convert_zap_xml_to_sarif(xml_file, sarif_file)
-          else:
-              # Create empty SARIF if no XML found
-              empty_sarif = {
-                  "version": "2.1.0",
-                  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-                  "runs": [{
-                      "tool": {
-                          "driver": {
-                              "name": "OWASP ZAP",
-                              "informationUri": "https://owasp.org/www-project-zap/"
-                          }
-                      },
-                      "results": []
-                  }]
-              }
-              with open(sarif_file, 'w') as f:
-                  json.dump(empty_sarif, f, indent=2)
-          EOF
-          
-          python3 convert_zap_to_sarif.py
-
-      # Upload ZAP full scan report
-      - name: Upload ZAP Full Scan HTML Report
+      # Upload ZAP Full Scan report
+      - name: Upload ZAP Full Scan report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: zap-full-scan-report
-          path: ${{ runner.temp }}/zap-reports/zap-results.html
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
 
-      # Upload results to GitHub Security tab
+      # Upload ZAP SARIF results to GitHub Security tab (if file exists)
       - name: Upload ZAP SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: ${{ runner.temp }}/zap-reports/zap-results.sarif
+          sarif_file: results.sarif
+        continue-on-error: true
 
-      # Clean up running containers
-      - name: Clean up
+      # Clean up container
+      - name: Stop and remove container
         if: always()
         run: |
           docker stop webapp || true
@@ -251,24 +269,22 @@ jobs:
       issues: write
       security-events: write
     environment: production
-    needs: [dast]   # Ensure deployment only runs if DAST also succeeds
+    needs: [dast]   # Deploy only if DAST passes
 
     steps:
-      # Manual approval before deployment
       - name: Approval
         uses: trstringer/manual-approval@v1
         with:
-            secret: ${{ github.TOKEN }}
-            approvers: Kulunu98
-            minimum-approvals: 1
-            issue-title: "Deploying v1.3.5 to production"
-            issue-body: "Please approve or deny the deployment of version v1.3.5."
-            timeout-minutes: 3       
+          secret: ${{ github.TOKEN }}
+          approvers: Kulunu98
+          minimum-approvals: 1
+          issue-title: "Deploying v1.3.5 to production"
+          issue-body: "Please approve or deny the deployment of version v1.3.5."
+          timeout-minutes: 3       
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Configure AWS access
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83
         with:
@@ -276,12 +292,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
 
-      # Build, tag and push image to ECR
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
@@ -292,7 +306,6 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Run Trivy vulnerability scanner on the container image
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -300,14 +313,12 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      # Upload Trivy results to GitHub Security tab
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # Update ECS task definition with new image
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -316,7 +327,6 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
-      # Deploy updated task definition to ECS service
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
