@@ -55,7 +55,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # language: [ 'javascript', 'typescript' ] # Node.js languages
         language: [ 'javascript' ] # Define languages for CodeQL (Node.js here)
     steps:
       - name: Checkout repository
@@ -79,34 +78,41 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Build and run application locally for scanning
-      - name: Build and run application
-        run: |
-          docker build -t webapp-test .
-          docker run -d -p 8080:8080 --name webapp webapp-test
-          sleep 25  # wait for app to become ready
+      # Build Docker image for app
+      - name: Build Docker image
+        run: docker build -t webapp-test .
 
-      # Run OWASP ZAP baseline scan (passive scan for quick feedback)
+      # Run app container inside custom network for ZAP to access
+      - name: Run app container
+        run: |
+          docker network create zapnet
+          docker run -d --rm --name webapp --network zapnet -p 8080:8080 webapp-test
+          sleep 25   # wait for app to become ready
+
+      # Run OWASP ZAP baseline scan (passive scan)
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://localhost:8080"
-          cmd_options: "-a"                  # Enable aggressive passive scan
-          allow_issue_writing: false         # Don’t open GitHub issues automatically
+          target: "http://webapp:8080"      # Use container name instead of localhost
+          cmd_options: "-a"                 # Aggressive passive scan
+        env:
+          DOCKER_NETWORK: zapnet            # Attach ZAP to same network
 
-      # Upload human-readable HTML report as pipeline artifact
+      # Upload human-readable HTML report as artifact
       - name: Upload ZAP HTML report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
           path: report_html.html
 
-      # Run OWASP ZAP full scan (active scan - finds real vulnerabilities)
+      # Run OWASP ZAP full scan (active scan)
       - name: Run OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.10.0
         with:
-          target: "http://localhost:8080"
-          fail_on_warn: true   # Fail pipeline if medium/high issues are found
+          target: "http://webapp:8080"
+          fail_on_warn: true                # Fail if medium/high issues found
+        env:
+          DOCKER_NETWORK: zapnet
 
       # Upload ZAP results in SARIF format to GitHub Security tab
       - name: Upload ZAP SARIF results
